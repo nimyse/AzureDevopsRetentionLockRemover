@@ -1,65 +1,50 @@
-﻿using Newtonsoft.Json;
+// See https://aka.ms/new-console-template for more information
+using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using System.Net.Http.Headers;
 
-//Change this to true too perform the delete. If false it will only log the leases found.
-const bool DryRun = false;
+//encode your personal access token                   
+string credentials = Convert.ToBase64String(System.Text.Encoding.ASCII.GetBytes(string.Format("{0}:{1}", "", "")));
+const int buildDefinitionId = 9;
 
-//The definition Id of the build pipeline you want to remove the locks from
-const int BuildDefinitionId = 12;
-
-//The Private Access Token to use to authenticate to Azure Devops. To create one, follow this article: https://docs.microsoft.com/en-us/azure/devops/organizations/accounts/use-personal-access-tokens-to-authenticate?view=azure-devops&tabs=Windows
-const string AuthenticationPat = "";
-
-//The name of your organization
-const string OrganizatioName = "";
-
-//The name of the project your build pipeline resides in
-const string Projectname = "";
-
+//use the httpclient
 using (var client = new HttpClient())
 {
-    //Encode your personal access token
-    var credentials = Convert.ToBase64String(System.Text.Encoding.ASCII.GetBytes(string.Format("{0}:{1}", "", AuthenticationPat)));
-    
-    client.BaseAddress = new Uri($"https://dev.azure.com/{OrganizatioName}/{ProjectName}/");
+    client.BaseAddress = new Uri($"RepoUrl/");  //url of your organization
     client.DefaultRequestHeaders.Accept.Clear();
     client.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
     client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Basic", credentials);
 
     //Check that the build pipeline we are targeting exists  
-    var response = await client.GetAsync($"_apis/build/builds?definitions={BuildDefinitionId}&statusFilter=completed&api-version=7.1-preview.7");
+    var response = client.GetAsync($"_apis/build/builds?definitions={buildDefinitionId}&statusFilter=completed&api-version=7.1-preview.7").Result;
      
     if (response.IsSuccessStatusCode)
     {
-        //Build pipeline exists. Go ahead and get all the leases connected to this pipeline
-        var leasesUrl = $"_apis/build/retention/leases?api-version=6.1-preview&definitionId={BuildDefinitionId}";
-        var leases = await client.GetAsync(leasesUrl);
-        
-        //Parse the resulting leases id to be used for additional API calls
-        var leasesObject = JsonConvert.DeserializeObject<JObject>(await leases.Content.ReadAsStringAsync());
+        //Get all leases on the current build pipeline
+        var leasesUrl = $"_apis/build/retention/leases?api-version=6.1-preview&definitionId={buildDefinitionId}";
+        var leases = client.GetAsync(leasesUrl).Result;
+        var leasesObject = JsonConvert.DeserializeObject<JObject>(leases.Content.ReadAsStringAsync().Result);
 
         var leaseIds =
             from p in leasesObject["value"]
             select (string)p["leaseId"];
-        
-        //Join the lease Ids to a string for use in the delete call
-        var joinedIds = string.Join(", ", leaseIds.Select(x => x));
-        
-        Console.WriteLine($"Found {leaseIds.Count} leases. Proceding to delete: {DryRun}");
 
-        //Delete all the leases in one call
-        var deleteUrl = $"_apis/build/retention/leases?ids={joinedIds}&api-version=6.1-preview";
-        var deleteResponse = await client.DeleteAsync(deleteUrl);
-        
-        if (deleteResponse.IsSuccessStatusCode)
+        //var joinedIds = string.Join(", ", leaseIds.Select(x => x));
+
+        //Delete the leases
+        foreach (var item in leaseIds)
         {
-            Console.WriteLine($"Deleted all leases. Try to remove the build pipeline now.");
-        }
-        else
-        {
-            Console.WriteLine($"Deleted leases failed {deleteResponse.StatusCode}");
+            var deleteUrl = $"_apis/build/retention/leases?ids={item}&api-version=6.1-preview";
+            var deleteResponse = client.DeleteAsync(deleteUrl).Result;
+
+            if (deleteResponse.IsSuccessStatusCode)
+            {
+                Console.WriteLine($"Deleted all leases. Try to remove the build pipeline now.");
+            }
+            else
+            {
+                Console.WriteLine($"Deleted leases failed {deleteResponse.StatusCode}");
+            }
         }
     }
-    Console.WriteLine($"No build pipeline found with id { BuildDefinitionId }");
 }
